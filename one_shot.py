@@ -2,6 +2,7 @@ import tensorflow as tf
 import os
 import matplotlib.pyplot as plt
 import numpy as np
+import pickle
 
 def listdir_nohidden(path):
     for f in os.listdir(path):
@@ -43,44 +44,42 @@ def load_images(path, n = 0):
 
 
 
+
 train_folder_path = '/Users/samwwong/Downloads/images_background'
 X_train, y_train, class_dict = load_images(train_folder_path)
 
 
+# with open("X_train.pickle", "wb") as handle:
+# 	pickle.dump(X_train, handle)
 
 
 
 def get_batch(data_set, batch_size):
-	n_classes, n_examples, h, w = data_set.shape
-
-	categories = np.random.choice(n_classes, size = (batch_size, ), replace = False)
-
-	pairs = [np.zeros((batch_size, h, w, 1)) for i in range(2)]
-
-	targets = np.zeros((batch_size,))
-
-	targets[batch_size//2:] = 1
-
-	for i in range(batch_size):
-		category = categories[i]
-		idx_1 = np.random.randint(0, n_examples)
-		pairs[0][i, :, :, :] = data_set[category, idx_1].reshape(h, w, 1)
-		
-		idx_2 = np.random.randint(0, n_examples)
-		if i >= batch_size // 2:
-			category_2 = category
-		else:
-			category_2 = (category + np.random.randint(1, n_classes)) % n_classes
-
-		pairs[1][i, :, :, :] = data_set[category_2, idx_2].reshape(h, w, 1)
-
-	return pairs, targets
+    num_classes, num_examples, height, width = data_set.shape
+    categories = np.random.choice(num_classes, size = batch_size, replace = False)
+    
+    #Create pairs(2 images put together) and targets (half are the same character and half are different)
+    pairs = np.zeros((2, batch_size, height, width))
+    target = np.zeros((batch_size))
+    target[batch_size // 2:] = 1
+    
+    for i in range(batch_size):
+        category = categories[i]
+        idx_1 = np.random.randint(0, num_examples)
+        pairs[0][i][:][:] = data_set[category][idx_1]
+        
+        idx_2 = np.random.randint(0, num_examples)
+        if i >= batch_size // 2:
+            category_2 = category
+        else:
+            category_2 = (category + np.random.randint(1, num_classes)) % num_classes
+        
+        pairs[1][i][:][:] = data_set[category_2][idx_2]
+    
+    return pairs, target
 
 pairs, targets = get_batch(X_train, 10)
 
-print(pairs)
-print(targets)
-print(pairs.shape)
 
 
 
