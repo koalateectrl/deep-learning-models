@@ -54,6 +54,7 @@ def load_mnist():
 
 def get_batch(data_set, batch_size):
     num_classes, num_examples, height, width = data_set.shape
+    print(data_set.shape)
     categories = np.random.choice(num_classes, size = batch_size, replace = False)
     
     #Create pairs(2 images put together) and targets (half are the same character and half are different)
@@ -189,6 +190,7 @@ for step in range(steps):
 	train_pairs, train_targets = get_batch(X_train, batch_size)
 	test_pairs, test_targets = get_batch(X_test, batch_size)
 
+
 	train_pairs = train_pairs.reshape(train_pairs.shape[0], train_pairs.shape[1], 
 		train_pairs.shape[2], train_pairs.shape[3], -1).astype('float32')
 
@@ -196,6 +198,9 @@ for step in range(steps):
 		test_pairs.shape[2], test_pairs.shape[3], -1).astype('float32')
 
 	start_time = time.time()
+
+	print(train_pairs.shape)
+	print(test_pairs.shape)
 
 	train_step(train_pairs, train_targets, model, optimizer, train_loss, train_accuracy)
 
