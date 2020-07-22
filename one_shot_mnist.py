@@ -114,7 +114,7 @@ def loss_fn(y_true, y_pred):
 	return loss(y_true, y_pred)
 
 @tf.function
-def train_step(images, labels, model, optimizer, train_loss, train_accuracy):
+def train_step(images, labels, model_anc, model_pos, model_neg, optimizer, train_loss, train_accuracy):
 	with tf.GradientTape() as tape:
 		predictions = model([images[0], images[1]], training = True)
 		loss = loss_fn(labels, predictions)
