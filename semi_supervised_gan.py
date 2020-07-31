@@ -114,6 +114,8 @@ train_sup_step(X_sup_batch, y_sup_classes, d_model, d_sup_opt)
 
 
 
+#comments here
+#TODO: how to incorporate the GAN training portion in addition to the classificaiton task
 # [X_sup_batch, y], y_is_real = generate_real_samples(X_train, y_train, half_batch_size)
 
 
