@@ -27,75 +27,143 @@ def generate_real_samples(X_train, y_train, nb_samples):
 	is_real = np.ones((nb_samples, 1))
 	return [new_X, classes], is_real
 
+def generate_input_vector(nb_samples, input_dim = 100):
+	norm_input = np.random.randn(input_dim * nb_samples)
+	norm_input = norm_input.reshape(nb_samples, input_dim)
+	return norm_input
+
+# create fake samples
+def generate_fake_samples(g_model, nb_samples, input_dim = 100):
+	input_vector = generate_input_vector(nb_samples, input_dim)
+	g_images = g_model(input_vector)
+	is_real = np.zeros((nb_samples, 1))
+	return g_images, is_real
+
+#Functional API
 def make_generator_model(latent_dim = 100):
-	model = tf.keras.Sequential()
-	model.add(tf.keras.layers.Dense(128 * 7 * 7, use_bias = False,  input_shape = (latent_dim, )))
-	model.add(tf.keras.layers.LeakyReLU(alpha = 0.2))
+	gen_inputs = tf.keras.layers.Input(shape = (latent_dim, ))
+	
+	dense1 = tf.keras.layers.Dense(128 * 7 * 7)(gen_inputs)
+	leaky1 = tf.keras.layers.LeakyReLU(alpha = 0.2)(dense1)
+	reshape = tf.keras.layers.Reshape((7, 7, 128))(leaky1)
 
-	model.add(tf.keras.layers.Reshape((7, 7, 128)))
-	assert model.output_shape == (None, 7, 7, 128)
+	convt1 = tf.keras.layers.Conv2DTranspose(128, (4, 4), strides = (2,2), padding = 'same', use_bias = False)(reshape)
+	leaky2 = tf.keras.layers.LeakyReLU(alpha = 0.2)(convt1)
 
-	model.add(tf.keras.layers.Conv2DTranspose(128, (4, 4), strides = (2,2), padding = 'same', use_bias = False))
-	assert model.output_shape == (None, 14, 14, 128)
-	model.add(tf.keras.layers.LeakyReLU(alpha = 0.2))
+	convt2 = tf.keras.layers.Conv2DTranspose(128, (4, 4), strides = (2,2), padding = 'same', use_bias = False)(leaky2)
+	leaky3 = tf.keras.layers.LeakyReLU(alpha = 0.2)(convt2)
 
-	model.add(tf.keras.layers.Conv2DTranspose(128, (4, 4), strides = (2,2), padding = 'same', use_bias = False))
-	assert model.output_shape == (None, 28, 28, 128)
-	model.add(tf.keras.layers.LeakyReLU(alpha = 0.2))
+	g_out_layer = tf.keras.layers.Conv2D(1, (7, 7), padding = 'same', use_bias = False, activation = 'tanh')(leaky3)
 
-	model.add(tf.keras.layers.Conv2D(1, (7, 7), padding = 'same', use_bias = False, activation = 'tanh'))
-	assert model.output_shape == (None, 28, 28, 1)
+	g_model = tf.keras.Model(gen_inputs, g_out_layer)
+	return g_model
 
-	return model
 
-def make_base_discriminator_model(input_shape = (28, 28, 1), n_classes = 10):
-	model = tf.keras.Sequential()
-	model.add(tf.keras.layers.Conv2D(128, (3, 3), strides = (2, 2), padding = 'same', input_shape = input_shape))
-	model.add(tf.keras.layers.LeakyReLU(alpha = 0.2))
+#Activation to go from softmax preds to logistic
+def custom_activation(output):
+	logexpsum = tf.keras.backend.sum(tf.keras.backend.exp(output), axis = -1, keepdims = True)
+	result = logexpsum / (logexpsum + 1.0)
+	return result
 
-	model.add(tf.keras.layers.Conv2D(128, (3, 3), strides = (2, 2), padding = 'same'))
-	model.add(tf.keras.layers.LeakyReLU(alpha = 0.2))
 
-	model.add(tf.keras.layers.Conv2D(128, (3, 3), strides = (2, 2), padding = 'same'))
-	model.add(tf.keras.layers.LeakyReLU(alpha = 0.2))
-	model.add(tf.keras.layers.Flatten())
-	model.add(tf.keras.layers.Dropout(0.4))
+#Functional API
+def make_discriminator_models(input_shape = (28, 28, 1), n_classes = 10):
+	img_inputs = tf.keras.layers.Input(shape = input_shape)
+	conv1 = tf.keras.layers.Conv2D(128, (3, 3), strides = (2, 2), padding = 'same')(img_inputs)
+	leaky1 = tf.keras.layers.LeakyReLU(alpha = 0.2)(conv1)
 
-	model.add(tf.keras.layers.Dense(n_classes))
+	conv2 = tf.keras.layers.Conv2D(128, (3, 3), strides = (2, 2), padding = 'same')(leaky1)
+	leaky2 = tf.keras.layers.LeakyReLU(alpha = 0.2)(conv2)
 
-	return model
+	conv3 = tf.keras.layers.Conv2D(128, (3, 3), strides = (2, 2), padding = 'same')(leaky2)
+	leaky3 = tf.keras.layers.LeakyReLU(alpha = 0.2)(conv3)
 
-def d_unsup_loss(real_output, fake_output):
-	sigmoid_loss = tf.keras.losses.BinaryCrossentropy(from_logits = True)
+	conv4 = tf.keras.layers.Conv2D(128, (3, 3), strides = (2, 2), padding = 'same')(leaky3)
+	leaky4 = tf.keras.layers.LeakyReLU(alpha = 0.2)(conv4)
 
+	flat = tf.keras.layers.Flatten()(leaky4)
+	drop = tf.keras.layers.Dropout(0.4)(flat)
+	dense = tf.keras.layers.Dense(n_classes)(drop)
+
+	s_out_layer = tf.keras.layers.Activation('softmax')(dense)
+	s_model = tf.keras.Model(img_inputs, s_out_layer)
+
+	d_out_layer = tf.keras.layers.Lambda(custom_activation)(dense)
+	d_model = tf.keras.Model(img_inputs, d_out_layer)
+
+	return s_model, d_model
+
+def sup_loss(y_true, y_pred):
+	cce_loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits = False)
+	return cce_loss(y_true, y_pred)
+
+def unsup_loss(y_true, y_pred):
+	sigmoid_loss = tf.keras.losses.BinaryCrossentropy(from_logits = False)
+	return sigmoid_loss(y_true, y_pred)
+
+def gen_loss(y_true, y_pred):
+	sigmoid_loss = tf.keras.losses.BinaryCrossentropy(from_logits = False)
+	return sigmoid_loss(y_true, y_pred)
+
+
+def discriminator_loss(real_output, fake_output):
+	cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits = True)
 	real_loss = cross_entropy(tf.ones_like(real_output), real_output)
 	fake_loss = cross_entropy(tf.zeros_like(fake_output), fake_output)
-	total_unsup_loss = real_loss + fake_loss
-	return total_unsup_loss
-
-def d_sup_loss(true_classes, pred_classes):
-	cce_loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits = True)
-	return (cce_loss(true_classes, pred_classes))
-
-def d_loss(real_output, fake_output, true_classes, pred_classes):
-	return d_unsup_loss(real_output, fake_output) + d_sup_loss(true_classes, pred_classes)
-
+	total_loss = real_loss + fake_loss
+	return total_loss
 
 def generator_loss(fake_output):
+	cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits = True)
 	return cross_entropy(tf.ones_like(fake_output), fake_output)
 
 
-def train_sup_step(X, y, model, opt):
-	with tf.GradientTape() as tape:
-		sup_preds = model(X, training = True)
-		sup_loss = d_sup_loss(y, sup_preds)
+def train_sup_step(X, y, s_model, s_opt, class_loss, class_acc):
+	with tf.GradientTape() as s_tape:
+		sup_preds = s_model(X, training = True)
+		supervised_loss = sup_loss(y, sup_preds)
 
-	sup_grads = tape.gradient(sup_loss, model.trainable_variables)
-	opt.apply_gradients(zip(sup_grads, model.trainable_variables))
+	supervised_grads = s_tape.gradient(supervised_loss, s_model.trainable_variables)
+	s_opt.apply_gradients(zip(supervised_grads, s_model.trainable_variables))
 
-	return
+	class_loss(supervised_loss)
+	class_acc(y, sup_preds)
+
+def train_unsup_step(X_real, X_gen, d_model, d_opt, disc_loss_metric, g_model, g_opt, gen_loss_metric):
+	with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
+		gen_images = g_model(X_gen, training = True)
+
+		real_output = d_model(X_real, training = True)
+		fake_output = d_model(gen_images, training = True)
+
+		gen_loss = generator_loss(fake_output)
+		disc_loss = unsup_loss(real_output, fake_output)
+
+	gen_grads = gen_tape.gradient(gen_loss, g_model.trainable_variables)
+	disc_grads = disc_tape.gradient(disc_loss, d_model.trainable_variables)
+
+	g_opt.apply_gradients(zip(gen_grads, g_model.trainable_variables))
+	d_opt.apply_gradients(zip(disc_grads, d_model.trainable_variables))
+
+	disc_loss_metric(disc_loss)
+	gen_loss_metric(gen_loss)
+
+# def train_gen_step(X, y, d_model, g_model, g_opt, gen_loss):
+
+# 	with tf.GradientTape() as g_tape:
+# 		gen_images = g_model(X, training = True)
+# 		disc_preds = d_model(gen_images, training = False)
+# 		generator_loss = gen_loss(y, disc_preds)
+	
+# 	generator_grads = g_tape.gradient(generator_loss, g_model.trainable_variables)
+# 	g_opt.apply_gradients(zip(generator_grads, g_model.trainable_variables))
+
+# 	gen_loss(generator_loss)
+
 
 batch_size = 100
+gen_dim = 100
+nb_epochs = 20
 
 (X_train, y_train), (X_test, y_test) = tf.keras.datasets.mnist.load_data()
 
@@ -103,33 +171,49 @@ X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], X_train.shape[2], 
 X_train = (X_train - 127.5) / 127.5
 
 
+batches_per_epoch = X_train.shape[0] // batch_size
+nb_steps = batches_per_epoch * nb_epochs
+
 half_batch_size = batch_size // 2
-d_model = make_base_discriminator_model()
-d_sup_opt = tf.keras.optimizers.Adam(lr = 0.0002, beta_1 = 0.5)
+s_model, d_model = make_discriminator_models()
+s_opt = tf.keras.optimizers.Adam(lr = 0.0002, beta_1 = 0.5)
+d_opt = tf.keras.optimizers.Adam(lr = 0.0002, beta_1 = 0.5)
 
+g_model = make_generator_model(gen_dim)
+g_opt = tf.keras.optimizers.Adam(lr = 0.0002, beta_1 = 0.5)
 
-X_sup, y_sup = select_supervised_samples(X_train, y_train)
-[X_sup_batch, y_sup_classes], _ = generate_real_samples(X_sup, y_sup, half_batch_size)
-train_sup_step(X_sup_batch, y_sup_classes, d_model, d_sup_opt)
+class_loss_metric = tf.keras.metrics.Mean(name = 'classification_loss')
+class_acc_metric = tf.keras.metrics.SparseCategoricalAccuracy(name = 'classification_accuracy')
 
+disc_loss_metric = tf.keras.metrics.Mean(name = 'discriminator_loss')
+gen_loss_metric = tf.keras.metrics.Mean(name = 'generator_loss')
 
+for i in range(1, nb_steps + 1):
 
-#comments here
-#TODO: how to incorporate the GAN training portion in addition to the classificaiton task
-# [X_sup_batch, y], y_is_real = generate_real_samples(X_train, y_train, half_batch_size)
+	class_loss_metric.reset_states()
+	class_acc_metric.reset_states()
+	disc_loss_metric.reset_states()
+	gen_loss_metric.reset_states()
 
+	#Train s_model (softmax)
+	X_sup, y_sup = select_supervised_samples(X_train, y_train)
+	[X_sup_batch, y_sup_classes], _ = generate_real_samples(X_sup, y_sup, half_batch_size)
+	train_sup_step(X_sup_batch, y_sup_classes, s_model, s_opt, class_loss_metric, class_acc_metric)
 
+	#Train d_model/g_model (discriminator/generator)
+	[X_unsup_real, _], y_unsup_real = generate_real_samples(X_train, y_train, half_batch_size)
 
+	X_gen = generate_input_vector(half_batch_size, gen_dim)
 
+	# X_gen, y_gen = generate_input_vector(batch_size, gen_dim), tf.ones(batch_size, 1)
+	train_unsup_step(X_unsup_real, X_gen, d_model, d_opt, disc_loss_metric, g_model, g_opt, gen_loss_metric)
 
-# BATCH_SIZE = 256
-# train_dataset = tf.data.Dataset.from_tensor_slices((X_train)).shuffle(60000).batch(BATCH_SIZE)
-
-# d_unsup_opt = tf.keras.optimizers.Adam(lr = 0.0002, beta_1 = 0.5)
-
-# g_opt = tf.keras.optimizers.Adam(lr = 0.0002, beta_1 = 0.5)
-
-
+	template = 'Step {}, Classification Loss: {}, Classification Accuracy: {}, Discriminator Loss: {}, Generator Loss: {}'
+	print(template.format(i,
+			class_loss_metric.result(),
+			class_acc_metric.result() * 100,
+			disc_loss_metric.result(),
+			gen_loss_metric.result()))
 
 
 
