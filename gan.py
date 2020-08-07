@@ -145,14 +145,12 @@ def generate_and_save_images(model, epoch, test_input):
 train(train_dataset, EPOCHS)
 
 anim_file = 'dcgan.gif'
-with image.io.get_writer(anim_file, mode = "I") as writer:
+with imageio.get_writer(anim_file, mode = "I") as writer:
 	filenames = glob.glob('images*.png')
 	filenames = sorted(filenames)
 	for filename in filenames:
 		image = imageio.imread(filename)
 		writer.append_data(image)
-	image = imageio.imread(filename)
-	writer.append_data(image)
 
 import tensorflow_docs.vis.embed as embed
 embed.embed_file(anim_file)
