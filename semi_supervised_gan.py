@@ -1,5 +1,6 @@
 import tensorflow as tf
 import numpy as np
+import matplotlib.pyplot as plt
 
 
 
@@ -134,11 +135,32 @@ def test_step(X, y, s_model, test_loss_metric, test_acc_metric):
 	test_acc_metric(y, test_preds)
 
 
+def generate_and_save_images(model, epoch, test_input):
+	predictions = model(test_input, training=False)
+
+	fig = plt.figure(figsize=(4,4))
+
+	for i in range(predictions.shape[0]):
+		plt.subplot(4, 4, i + 1)
+		plt.imshow(predictions[i, :, :, 0])
+		plt.axis('off')
+
+	plt.savefig('image_at_epoch_{:04d}.png'.format(epoch))
+	plt.show()
+
+
 nb_samples = 1000
 nb_classes = 10
 batch_size = 100
+half_batch_size = batch_size // 2
 gen_dim = 100
 nb_epochs = 20
+
+
+#Check to see what the generator is generating
+num_examples_to_generate = 16
+seed = tf.random.normal([num_examples_to_generate, gen_dim])
+
 
 (X_train, y_train), (X_test, y_test) = tf.keras.datasets.mnist.load_data()
 
@@ -163,7 +185,6 @@ gen_loss_metric = tf.keras.metrics.Mean(name = 'generator_loss')
 
 test_loss_metric = tf.keras.metrics.Mean(name = 'test_loss')
 test_acc_metric = tf.keras.metrics.SparseCategoricalAccuracy(name = 'test_accuracy')
-
 
 
 
@@ -196,6 +217,9 @@ for epoch in range(1, nb_epochs + 1):
 
 	for test_images, test_labels in test_ds:
 		test_step(test_images, test_labels, s_model, test_loss_metric, test_acc_metric)
+
+
+	generate_and_save_images(g_model, epoch, seed)
 
 
 	template = 'Epoch {}, Classification Loss: {}, Classification Accuracy: {}, Discriminator Loss: {}, Generator Loss: {}, Test Loss {}, Test Accuracy: {}'

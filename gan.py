@@ -1,16 +1,21 @@
 import tensorflow as tf
-import numpy as np
+import glob
+import imageio
 import matplotlib.pyplot as plt
+import numpy as np
 import os
+import PIL
 import time
+
+from IPython import display
 
 (X_train, y_train), (X_test, y_test) = tf.keras.datasets.mnist.load_data()
 
-X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], X_train.shape[2], -1)
+X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], X_train.shape[2], -1).astype('float32')
 X_train = (X_train - 127.5) / 127.5
 
 BATCH_SIZE = 256
-train_dataset = tf.data.Dataset.from_tensor_slices((X_train)).shuffle(60000).batch(BATCH_SIZE)
+train_dataset = tf.data.Dataset.from_tensor_slices(X_train).shuffle(60000).batch(BATCH_SIZE)
 
 def make_generator_model():
 	model = tf.keras.Sequential()
@@ -117,25 +122,41 @@ def train(dataset, epochs):
 		generate_and_save_images(generator, epoch + 1, seed)
 
 		if (epoch + 1) % 15 == 0:
-			checkpoint.save(file_prefix = checkpoink_prefix)
+			checkpoint.save(file_prefix = checkpoint_prefix)
+
+		print ('Time for epoch {} is {} sec'.format(epoch + 1, time.time()-start))
 
 	display.clear_output(wait = True)
 	generate_and_save_images(generator, epochs, seed)
 
-def generate_and_save_images(model, epochs, test_input):
-	predictions = model(test_input, training-False)
+def generate_and_save_images(model, epoch, test_input):
+	predictions = model(test_input, training=False)
 
 	fig = plt.figure(figsize=(4,4))
 
 	for i in range(predictions.shape[0]):
 		plt.subplot(4, 4, i + 1)
-		plt.imshow(predictions[i, :, :, 0])
+		plt.imshow(predictions[i, :, :, 0] * 127.5 + 127.5, cmap='gray')
 		plt.axis('off')
 
 	plt.savefig('image_at_epoch_{:04d}.png'.format(epoch))
 	plt.show()
 
 train(train_dataset, EPOCHS)
+
+anim_file = 'dcgan.gif'
+with image.io.get_writer(anim_file, mode = "I") as writer:
+	filenames = glob.glob('images*.png')
+	filenames = sorted(filenames)
+	for filename in filenames:
+		image = imageio.imread(filename)
+		writer.append_data(image)
+	image = imageio.imread(filename)
+	writer.append_data(image)
+
+import tensorflow_docs.vis.embed as embed
+embed.embed_file(anim_file)
+
 
 
 
