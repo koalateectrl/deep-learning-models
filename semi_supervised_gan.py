@@ -1,13 +1,15 @@
 import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
+import time
+import os
 
 from IPython import display
 
 
 
 # select a supervised subset of the dataset, all classes have same number of data points in the subset
-def select_supervised_samples(X_train, y_train, nb_samples = 1000, nb_classes = 10):
+def select_samples(X_train, y_train, nb_samples = 1000, nb_classes = 10):
 	X_list, y_list = [], []
 	nb_per_class = int(nb_samples / nb_classes)
 	for class_num in range(nb_classes):
@@ -107,8 +109,8 @@ def train_sup_step(X, y, s_model, s_opt, class_loss_metric, class_acc_metric):
 	class_acc_metric(y, sup_preds)
 
 @tf.function
-def train_unsup_step(X_real, batch_size, gen_dim, d_model, d_opt, disc_loss_metric, g_model, g_opt, gen_loss_metric):
-	X_gen = generate_input_vector(batch_size, gen_dim)
+def train_unsup_step(X_real, half_batch_size, gen_dim, d_model, d_opt, disc_loss_metric, g_model, g_opt, gen_loss_metric):
+	X_gen = generate_input_vector(half_batch_size, gen_dim)
 
 	with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
 		gen_images = g_model(X_gen, training = True)
@@ -164,6 +166,7 @@ num_examples_to_generate = 16
 seed = tf.random.normal([num_examples_to_generate, gen_dim])
 
 
+#Loading train and test data
 (X_train, y_train), (X_test, y_test) = tf.keras.datasets.mnist.load_data()
 
 X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], X_train.shape[2], -1).astype('float32')
@@ -189,12 +192,22 @@ test_loss_metric = tf.keras.metrics.Mean(name = 'test_loss')
 test_acc_metric = tf.keras.metrics.SparseCategoricalAccuracy(name = 'test_accuracy')
 
 
+#saving models/optimizers
+checkpoint_dir = './training_checkpoints'
+checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
+checkpoint = tf.train.Checkpoint(generator_optimizer=g_opt,
+	discriminator_optimizer=d_opt,
+	generator=g_model,
+	discriminator=d_model,
+	classifier=s_model)
 
-X_sup, y_sup = select_supervised_samples(X_train, y_train, nb_samples, nb_classes)
+
+
+X_sup, y_sup = select_samples(X_train, y_train, nb_samples, nb_classes)
 supervised_ds = tf.data.Dataset.from_tensor_slices((X_sup, y_sup)).shuffle(nb_samples).batch(batch_size)
 
-X_unsup, y_unsup = select_supervised_samples(X_train, y_train, nb_samples, nb_classes)
-unsupervised_ds = tf.data.Dataset.from_tensor_slices((X_unsup, y_unsup)).shuffle(nb_samples).batch(batch_size)
+X_unsup, _ = select_samples(X_train, y_train, nb_samples, nb_classes)
+unsupervised_ds = tf.data.Dataset.from_tensor_slices(X_unsup).shuffle(nb_samples).batch(batch_size)
 
 test_ds = tf.data.Dataset.from_tensor_slices((X_test, y_test)).batch(batch_size)
 
@@ -217,13 +230,13 @@ for epoch in range(1, nb_epochs + 1):
 		train_sup_step(sup_images, sup_labels, s_model, s_opt, class_loss_metric, class_acc_metric)
 
 	# Train d_model/g_model (discriminator/generator)
-	for unsup_images, unsup_labels in unsupervised_ds:
+	for unsup_images in unsupervised_ds:
 		train_unsup_step(unsup_images, half_batch_size, gen_dim, d_model, d_opt, disc_loss_metric, g_model, g_opt, gen_loss_metric)
 
 	for test_images, test_labels in test_ds:
 		test_step(test_images, test_labels, s_model, test_loss_metric, test_acc_metric)
 
-	#Used to examine the quality of the images
+	#Used to examine the quality of the generated images
 	display.clear_output(wait = True)
 	generate_and_save_images(g_model, epoch + 1, seed)
 
@@ -242,6 +255,18 @@ for epoch in range(1, nb_epochs + 1):
 			gen_loss_metric.result(),
 			test_loss_metric.result(),
 			test_acc_metric.result() * 100))
+
+s_model.save('s_model.h5')
+
+
+#Testing the loading of the saved model and prediction accuracy
+# new_model = tf.keras.models.load_model('s_model.h5')
+
+# new_test_preds = s_model(X_test, training = False)
+# new_test_acc_metric = tf.keras.metrics.SparseCategoricalAccuracy()
+
+# new_test_acc_metric(y_test, new_test_preds)
+# print(new_test_acc_metric.result() * 100)
 
 
 
