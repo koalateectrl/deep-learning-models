@@ -1,5 +1,7 @@
 import tensorflow as tf
 import time
+from tensorflow import keras as K
+import tensorflow_addons as tfa
 
 from absl import flags
 from absl import app
@@ -16,98 +18,169 @@ train_ds = tf.data.Dataset.from_tensor_slices(X_train).shuffle(60000).batch(batc
 test_ds = tf.data.Dataset.from_tensor_slices(X_test).shuffle(10000).batch(batch_size)
 
 
-class MyModel(tf.keras.Model):
-    def __init__(self):
-        super(MyModel, self).__init__()
-        self.conv1 = tf.keras.layers.Conv2D(filters = 16, kernel_size = (3, 3), activation = 'relu', padding = 'same')
-        self.pool1 = tf.keras.layers.MaxPool2D(pool_size = (2, 2), padding = 'same')
-        self.conv2 = tf.keras.layers.Conv2D(filters = 8, kernel_size = (3, 3), activation = 'relu', padding = 'same')
-        self.pool2 = tf.keras.layers.MaxPool2D(pool_size = (2, 2), padding = 'same')
-        self.conv3 = tf.keras.layers.Conv2D(filters = 8, kernel_size = (3, 3), activation = 'relu', padding = 'same')
-
-        self.bottleneck = tf.keras.layers.MaxPooling2D(pool_size = (2, 2), padding = 'same')
-
-        self.conv4 = tf.keras.layers.Conv2D(filters = 8, kernel_size = (3, 3), activation = 'relu', padding = 'same')
-        self.upsample1 = tf.keras.layers.UpSampling2D(size = (2, 2))
-        self.conv5 = tf.keras.layers.Conv2D(filters = 8, kernel_size = (3, 3), activation = 'relu', padding = 'same')
-        self.upsample2 = tf.keras.layers.UpSampling2D(size = (2, 2))
-        self.conv6 = tf.keras.layers.Conv2D(filters = 16, kernel_size = (3, 3), activation = 'relu', padding = 'valid')
-        self.upsample3 = tf.keras.layers.UpSampling2D(size = (2, 2))
-        self.conv7 = tf.keras.layers.Conv2D(filters = 1, kernel_size = (3, 3), padding = 'same', activation = 'sigmoid')
-
-    def call(self, x):
-        x = self.conv1(x)
-        x = self.pool1(x)
-        x = self.conv2(x)
-        x = self.pool2(x)
-        x = self.conv3(x)
-        x = self.bottleneck(x)
-        x = self.conv4(x)
-        x = self.upsample1(x)
-        x = self.conv5(x)
-        x = self.upsample2(x)
-        x = self.conv6(x)
-        x = self.upsample3(x)
-        x = self.conv7(x)
-        return x
-
-    def model(self, input_shape = (28, 28, 1)):
-        x = tf.keras.Input(shape = input_shape)
-        return tf.keras.Model(inputs = x, outputs = self.call(x))
-
-test_model = MyModel()
-print(test_model.model().summary())
+def ConvolutionBlock(x, name, fms, params):
+    x = tf.keras.layers.Conv2D(filters = fms, **params, name = name + "_conv0")(x)
+    x = tfa.layers.InstanceNormalization(axis = -1, center = True, scale = True,
+        beta_initializer = "random_uniform",
+        gamma_initializer = "random_uniform", name = name + "_bn0")(x)
+    x = tf.keras.layers.LeakyReLU(alpha = 0.1, name = name + "_relu0")(x)
+    x = tf.keras.layers.Conv2D(filters = fms, **params, name = name + "_conv1")(x)
+    x = tfa.layers.InstanceNormalization(axis = -1, center = True, scale = True,
+        beta_initializer = "random_uniform",
+        gamma_initializer = "random_uniform", name = name + "_bn1")(x)
+    x = tf.keras.layers.LeakyReLU(alpha = 0.1, name = name)(x)
+    return x
 
 
-def loss_fn(y_true, y_pred):
-    return tf.keras.losses.MSE(y_true, y_pred)
+def unet_2D():
 
-@tf.function
-def train_step(images, model, optimizer, train_loss):
-    with tf.GradientTape() as tape:
-        predictions = model(images, training = True)
-        loss = loss_fn(images, predictions)
+    learning_rate = 0.001
+    use_upsampling = False
 
-    gradients = tape.gradient(loss, model.trainable_variables)
-    optimizer.apply_gradients(zip(gradients, model.trainable_variables))
+    input_shape = [256, 256, 1]
+    data_format = "channels_last"
+    concat_axis = -1
 
-    train_loss(loss)
+    inputs = K.layers.Input(shape = input_shape, name = "fMRImages")
+
+    params = dict(kernel_size = (3, 3), activation = None,
+        padding = "same", data_format = data_format,
+        kernel_initializer = "he_uniform")
+
+    fms = 32
+    dropout = 0.3
+    n_cl_out = 1
+
+    params_trans = dict(data_format = data_format,
+        kernel_size = (2, 2), strides = (2, 2),
+        padding = "same")
+
+    # BEGIN - Encoding path
+    encodeA = ConvolutionBlock(inputs, "encodeA", fms, params)
+    poolA = K.layers.MaxPooling2D(name = "poolA", pool_size=(2, 2))(encodeA)
+
+    encodeB = ConvolutionBlock(poolA, "encodeB", fms * 2, params)
+    poolB = K.layers.MaxPooling2D(name = "poolB", pool_size=(2, 2))(encodeB)
+
+    encodeC = ConvolutionBlock(poolB, "encodeC", fms * 4, params)
+    poolC = K.layers.MaxPooling2D(name = "poolC", pool_size=(2, 2))(encodeC)
+
+    encodeD = ConvolutionBlock(poolC, "encodeD", fms * 8, params)
+    poolD = K.layers.MaxPooling2D(name = "poolD", pool_size=(2, 2))(encodeD)
+
+    encodeE = ConvolutionBlock(poolD, "encodeE", fms * 16, params)
+    # END - Encoding path
+
+    # BEGIN - Decoding path
+    if use_upsampling:
+        up = K.layers.UpSampling2D(name = "upE", size = (2, 2),
+                                   interpolation="bilinear")(encodeE)
+    else:
+        up = K.layers.Conv2DTranspose(name = "transconvE", filters = fms * 8,
+                                      **params_trans)(encodeE)
+    concatD = K.layers.concatenate(
+        [up, encodeD], axis = concat_axis, name = "concatD")
+
+    decodeC = ConvolutionBlock(concatD, "decodeC", fms * 8, params)
+
+    if use_upsampling:
+        up = K.layers.UpSampling2D(name = "upC", size = (2, 2),
+                                   interpolation = "bilinear")(decodeC)
+    else:
+        up = K.layers.Conv2DTranspose(name = "transconvC", filters = fms * 4,
+                                      **params_trans)(decodeC)
+    concatC = K.layers.concatenate(
+        [up, encodeC], axis = concat_axis, name = "concatC")
+
+    decodeB = ConvolutionBlock(concatC, "decodeB", fms * 4, params)
+
+    if use_upsampling:
+        up = K.layers.UpSampling2D(name = "upB", size = (2, 2),
+                                   interpolation = "bilinear")(decodeB)
+    else:
+        up = K.layers.Conv2DTranspose(name = "transconvB", filters = fms * 2,
+                                      **params_trans)(decodeB)
+    concatB = K.layers.concatenate(
+        [up, encodeB], axis = concat_axis, name = "concatB")
+
+    decodeA = ConvolutionBlock(concatB, "decodeA", fms * 2, params)
+
+    if use_upsampling:
+        up = K.layers.UpSampling2D(name = "upA", size = (2, 2, 2),
+                                   interpolation = "bilinear")(decodeA)
+    else:
+        up = K.layers.Conv2DTranspose(name = "transconvA", filters = fms,
+                                      **params_trans)(decodeA)
+    concatA = K.layers.concatenate(
+        [up, encodeA], axis = concat_axis, name = "concatA")
+
+    # END - Decoding path
+
+    convOut = ConvolutionBlock(concatA, "convOut", fms, params)
+
+    prediction = K.layers.Conv2D(name = "PredictionMask",
+        filters = n_cl_out, kernel_size = (1, 1), 
+        data_format = data_format,
+        activation = "linear")(convOut)
+
+    model = K.models.Model(inputs = [inputs], outputs = [prediction])
+
+    model.summary()
+    return model
+
+model = unet_2D()
 
 
-@tf.function
-def test_step(images, model, test_loss):
-    predictions = model(images, training = False)
-    loss = loss_fn(images, predictions)
 
-    test_loss(loss)
+# def loss_fn(y_true, y_pred):
+#     return tf.keras.losses.MSE(y_true, y_pred)
+
+# @tf.function
+# def train_step(images, model, optimizer, train_loss):
+#     with tf.GradientTape() as tape:
+#         predictions = model(images, training = True)
+#         loss = loss_fn(images, predictions)
+
+#     gradients = tape.gradient(loss, model.trainable_variables)
+#     optimizer.apply_gradients(zip(gradients, model.trainable_variables))
+
+#     train_loss(loss)
 
 
-learning_rate = 0.001
-epochs = 50
-model = MyModel()
-optimizer = tf.keras.optimizers.SGD(lr = learning_rate)
+# @tf.function
+# def test_step(images, model, test_loss):
+#     predictions = model(images, training = False)
+#     loss = loss_fn(images, predictions)
 
-train_loss = tf.keras.metrics.Mean(name = 'train_loss')
-test_loss = tf.keras.metrics.Mean(name = 'test_loss')
+#     test_loss(loss)
 
-for epoch in range(1, epochs + 1):
-    start_time = time.time()
-    train_loss.reset_states()
-    test_loss.reset_states()
 
-    for images in train_ds:
-        train_step(images, model, optimizer, train_loss)
+# learning_rate = 0.001
+# epochs = 50
+# model = MyModel()
+# optimizer = tf.keras.optimizers.SGD(lr = learning_rate)
 
-    end_time = time.time()
-    logging.info(f"Epoch {epoch} time in seconds: {end_time - start_time}")
+# train_loss = tf.keras.metrics.Mean(name = 'train_loss')
+# test_loss = tf.keras.metrics.Mean(name = 'test_loss')
 
-    for test_images in test_ds:
-        test_step(images, model, test_loss)
+# for epoch in range(1, epochs + 1):
+#     start_time = time.time()
+#     train_loss.reset_states()
+#     test_loss.reset_states()
 
-    template = 'Epoch {}, Loss: {}, Test Loss {}'
-    print(template.format(epoch, 
-        train_loss.result(), 
-        test_loss.result()))
+#     for images in train_ds:
+#         train_step(images, model, optimizer, train_loss)
+
+#     end_time = time.time()
+#     logging.info(f"Epoch {epoch} time in seconds: {end_time - start_time}")
+
+#     for test_images in test_ds:
+#         test_step(images, model, test_loss)
+
+#     template = 'Epoch {}, Loss: {}, Test Loss {}'
+#     print(template.format(epoch, 
+#         train_loss.result(), 
+#         test_loss.result()))
 
 
 
