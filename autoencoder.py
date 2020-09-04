@@ -14,8 +14,22 @@ X_train = X_train / 255.0
 X_test = X_test / 255.0
 X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], X_train.shape[2], -1).astype("float32")
 X_test = X_test.reshape(X_test.shape[0], X_test.shape[1], X_test.shape[2], -1).astype("float32")
-train_ds = tf.data.Dataset.from_tensor_slices(X_train).shuffle(60000).batch(batch_size)
-test_ds = tf.data.Dataset.from_tensor_slices(X_test).shuffle(10000).batch(batch_size)
+X_train = tf.image.resize(X_train, [16, 16])
+X_test = tf.image.resize(X_test, [16, 16])
+
+print(X_train.shape)
+print(X_test.shape)
+
+TRAIN_LENGTH = X_train.shape[0]
+TEST_LENGTH = X_test.shape[0]
+
+BUFFER_SIZE = batch_size * 10
+
+train_ds = tf.data.Dataset.from_tensor_slices((X_train, X_train)).shuffle(BUFFER_SIZE, seed = 0).batch(batch_size)
+test_ds = tf.data.Dataset.from_tensor_slices((X_test, X_test)).batch(batch_size)
+
+STEPS_PER_EPOCH = 60000 // batch_size
+
 
 
 def ConvolutionBlock(x, name, fms, params):
@@ -37,7 +51,7 @@ def unet_2D():
     learning_rate = 0.001
     use_upsampling = False
 
-    input_shape = [256, 256, 1]
+    input_shape = [16, 16, 1]
     data_format = "channels_last"
     concat_axis = -1
 
@@ -128,59 +142,88 @@ def unet_2D():
     model.summary()
     return model
 
+
+def loss_fn(y_true, y_pred):
+    return tf.keras.losses.mean_absolute_error(y_true, y_pred)
+
+
+# @tf.function
+def train_step(images, labels, model, optimizer):
+    with tf.GradientTape() as tape:
+        predictions = model(images, training = True)
+        loss = loss_fn(images, predictions)
+
+    gradients = tape.gradient(loss, model.trainable_variables)
+    optimizer.apply_gradients(zip(gradients, model.trainable_variables))
+
+    return loss
+
+
+# @tf.function
+def test_step(test_ds, model, num_steps):
+    num_eval_steps = num_steps // batch_size
+    losses = 0.0
+    classification_loss = 0.0
+    for (batch, (x, y_seg)) in enumerate(test_ds.take(num_eval_steps)):
+        logits = model(x, training = False)
+        mae = loss_fn(y_seg, logits)
+        classification_loss += tf.reduce_mean(mae)
+        losses = classification_loss
+        loss_tot = losses / batch
+
+    return loss_tot, classification_loss
+
 model = unet_2D()
+start_epoch = 0
+
+
+initial_learning_rate = 0.001
+num_epochs = 200
+steps_per_epoch = STEPS_PER_EPOCH
+num_steps = int(num_epochs * steps_per_epoch)
+print(num_steps)
+
+lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(initial_learning_rate,
+    decay_steps = 200 * steps_per_epoch,
+    decay_rate = 0.1,
+    staircase = True)
+optimizer = tf.keras.optimizers.Adam(learning_rate = lr_schedule)
+checkpoint = tf.train.Checkpoint(model = model, optimizer = optimizer)
+
+train_loss = tf.keras.metrics.Mean(name = 'train_loss')
+test_loss = tf.keras.metrics.Mean(name = 'test_loss')
+
+
+train_loss_results = []
+train_accuracy_results = []
+train_losses_np = []
+test_losses_np = []
+
+for (batch, (x, y)) in enumerate(train_ds.take(num_steps)):
+#     #Optimize the model
+    epoch = int(batch // steps_per_epoch)
+    class_loss = train_step(x, y, model, optimizer)
+    loss_value = class_loss
+    train_loss(loss_value) # Add current batch loss
+    train_losses_np.append(train_loss.result().numpy())
+
+    if ((batch % 10) == 0):
+        print("epoch: ", str(epoch), " loss: ", str(train_loss.result()))
+
+    if (batch % steps_per_epoch == 0):
+        test_losses, classification_loss = test_step(test_ds, model, num_steps)
+        test_losses_np.append(test_losses)
+        row = "epoch: " + str(epoch) + " train loss:" + str(train_loss.result().numpy()) + "auc1: " + str(test_losses)
+        print(row)
 
 
 
-# def loss_fn(y_true, y_pred):
-#     return tf.keras.losses.MSE(y_true, y_pred)
+#         checkpoint_path = "checkpoints_new/" + "unet2d_" + str(epoch+start_epoch) + ".h5"
 
-# @tf.function
-# def train_step(images, model, optimizer, train_loss):
-#     with tf.GradientTape() as tape:
-#         predictions = model(images, training = True)
-#         loss = loss_fn(images, predictions)
-
-#     gradients = tape.gradient(loss, model.trainable_variables)
-#     optimizer.apply_gradients(zip(gradients, model.trainable_variables))
-
-#     train_loss(loss)
-
-
-# @tf.function
-# def test_step(images, model, test_loss):
-#     predictions = model(images, training = False)
-#     loss = loss_fn(images, predictions)
-
-#     test_loss(loss)
-
-
-# learning_rate = 0.001
-# epochs = 50
-# model = MyModel()
-# optimizer = tf.keras.optimizers.SGD(lr = learning_rate)
-
-# train_loss = tf.keras.metrics.Mean(name = 'train_loss')
-# test_loss = tf.keras.metrics.Mean(name = 'test_loss')
-
-# for epoch in range(1, epochs + 1):
-#     start_time = time.time()
-#     train_loss.reset_states()
-#     test_loss.reset_states()
-
-#     for images in train_ds:
-#         train_step(images, model, optimizer, train_loss)
-
-#     end_time = time.time()
-#     logging.info(f"Epoch {epoch} time in seconds: {end_time - start_time}")
-
-#     for test_images in test_ds:
-#         test_step(images, model, test_loss)
-
-#     template = 'Epoch {}, Loss: {}, Test Loss {}'
-#     print(template.format(epoch, 
-#         train_loss.result(), 
-#         test_loss.result()))
+        # row_ = checkpoint_path + " " + row
+        # with open("testsetresults_2d" + ".csv", "a") as fd:
+        #     fd.write(row_)
+        #     fd.write("\n")
 
 
 
