@@ -28,8 +28,6 @@ BUFFER_SIZE = batch_size * 10
 train_ds = tf.data.Dataset.from_tensor_slices((X_train, X_train)).shuffle(BUFFER_SIZE, seed = 0).batch(batch_size)
 test_ds = tf.data.Dataset.from_tensor_slices((X_test, X_test)).batch(batch_size)
 
-STEPS_PER_EPOCH = 60000 // batch_size
-
 
 
 def ConvolutionBlock(x, name, fms, params):
@@ -148,43 +146,34 @@ def loss_fn(y_true, y_pred):
 
 
 # @tf.function
-def train_step(images, labels, model, optimizer):
+def train_step(images, labels, model, optimizer, train_loss):
     with tf.GradientTape() as tape:
         predictions = model(images, training = True)
-        loss = loss_fn(images, predictions)
+        loss = loss_fn(labels, predictions)
 
     gradients = tape.gradient(loss, model.trainable_variables)
     optimizer.apply_gradients(zip(gradients, model.trainable_variables))
 
-    return loss
+    train_loss(loss)
 
 
 # @tf.function
-def test_step(test_ds, model, num_steps):
-    num_eval_steps = num_steps // batch_size
-    losses = 0.0
-    classification_loss = 0.0
-    for (batch, (x, y_seg)) in enumerate(test_ds.take(num_eval_steps)):
-        logits = model(x, training = False)
-        mae = loss_fn(y_seg, logits)
-        classification_loss += tf.reduce_mean(mae)
-        losses = classification_loss
-        loss_tot = losses / batch
+def test_step(images, labels, model, test_loss):
+    with tf.GradientTape() as tape:
+        predictions = model(images, training = False)
+        loss = loss_fn(labels, predictions)
 
-    return loss_tot, classification_loss
+    test_loss(loss)
+
 
 model = unet_2D()
-start_epoch = 0
-
 
 initial_learning_rate = 0.001
-num_epochs = 200
-steps_per_epoch = STEPS_PER_EPOCH
-num_steps = int(num_epochs * steps_per_epoch)
-print(num_steps)
+num_epochs = 10
+steps_per_epoch = X_train.shape[0] // batch_size
 
 lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(initial_learning_rate,
-    decay_steps = 200 * steps_per_epoch,
+    decay_steps = steps_per_epoch,
     decay_rate = 0.1,
     staircase = True)
 optimizer = tf.keras.optimizers.Adam(learning_rate = lr_schedule)
@@ -194,31 +183,32 @@ train_loss = tf.keras.metrics.Mean(name = 'train_loss')
 test_loss = tf.keras.metrics.Mean(name = 'test_loss')
 
 
-train_loss_results = []
-train_accuracy_results = []
-train_losses_np = []
-test_losses_np = []
+for epoch in range(1, num_epochs + 1):
+    start_time = time.time()
 
-for (batch, (x, y)) in enumerate(train_ds.take(num_steps)):
-#     #Optimize the model
-    epoch = int(batch // steps_per_epoch)
-    class_loss = train_step(x, y, model, optimizer)
-    loss_value = class_loss
-    train_loss(loss_value) # Add current batch loss
-    train_losses_np.append(train_loss.result().numpy())
+    train_loss.reset_states()
+    test_loss.reset_states()
 
-    if ((batch % 10) == 0):
-        print("epoch: ", str(epoch), " loss: ", str(train_loss.result()))
+    for images, labels in train_ds:
+        train_step(images, labels, model, optimizer, train_loss)
 
-    if (batch % steps_per_epoch == 0):
-        test_losses, classification_loss = test_step(test_ds, model, num_steps)
-        test_losses_np.append(test_losses)
-        row = "epoch: " + str(epoch) + " train loss:" + str(train_loss.result().numpy()) + "auc1: " + str(test_losses)
-        print(row)
+    end_time = time.time()
+    logging.info(f"Epoch {epoch} time in seconds: {end_time - start_time}")
+
+    for test_images, test_labels in test_ds:
+        test_step(test_images, test_labels, model, test_loss)
+
+    template = 'Epoch {}, Loss: {}, Test Loss {}'
+    print(template.format(epoch,
+        train_loss.result(),
+        test_loss.result()))
+
+    checkpoint_path = "checkpoints/unet2d_" + str(epoch)
+    model.save(checkpoint_path)
 
 
-
-#         checkpoint_path = "checkpoints_new/" + "unet2d_" + str(epoch+start_epoch) + ".h5"
+        #loaded = tf.keras.models.load_model(checkpoint_path)
+        # checkpoint_path = "checkpoints_new/" + "unet2d_" + str(epoch+start_epoch) + ".h5"
 
         # row_ = checkpoint_path + " " + row
         # with open("testsetresults_2d" + ".csv", "a") as fd:
