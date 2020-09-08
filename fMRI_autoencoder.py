@@ -10,37 +10,36 @@ from absl import flags
 from absl import app
 from absl import logging
 
-flags.DEFINE_integer('batch_size', 256, 'Batch size')
+flags.DEFINE_integer('batch_size', 16, 'Batch size')
 flags.DEFINE_integer('num_epochs', 5, 'Number of epochs')
 flags.DEFINE_float('learning_rate', 0.001, 'Initial learning rate for training')
 flags.DEFINE_string('ckpt_path', 'checkpoints/unet2d_', 'Checkpoint Directory')
 flags.DEFINE_integer('seed', 0, 'Seed for shuffling training batch')
 
+# flags.DEFINE_string('noisy_path', '/home/data2/liztong/AI_rsFMRI/noise_rsFMRI', 'Directory with Noisy fMRI Images')
+# flags.DEFINE_string('clean_path', '/home/data2/liztong/AI_rsFMRI/clean_rsFMRI', 'Directory with Clean fMRI Images')
+
+flags.DEFINE_string('img_path', '/home/data2/samwwong/fMRI_denoising/preprocessing/preprocessed_images', 'Path to the preprocessed data')
+
 FLAGS = flags.FLAGS
 
 
+
 def create_data_set():
-    (X_train, y_train), (X_test, y_test) = tf.keras.datasets.mnist.load_data()
-    X_train = X_train / 255.0
-    X_test = X_test / 255.0
 
-    X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], X_train.shape[2], -1).astype("float32")
-    X_test = X_test.reshape(X_test.shape[0], X_test.shape[1], X_test.shape[2], -1).astype("float32")
+    X_train = np.load(FLAGS.img_path + "/noisy_0_1200x128x128x91.npy", allow_pickle=True)
+    Y_train = np.load(FLAGS.img_path + "/clean_0_1200x128x128x91.npy", allow_pickle=True)
 
-    X_train = tf.image.resize(X_train, [16, 16])
-    X_test = tf.image.resize(X_test, [16, 16])
-
-    print(X_train.shape)
-    print(X_test.shape)
+    print("DONE LOADING")
 
     train_len = X_train.shape[0]
-    test_len = X_test.shape[0]
 
     BUFFER_SIZE = FLAGS.batch_size * 10
 
-    train_ds = tf.data.Dataset.from_tensor_slices((X_train, X_train)).shuffle(BUFFER_SIZE, seed = FLAGS.seed).batch(FLAGS.batch_size)
-    test_ds = tf.data.Dataset.from_tensor_slices((X_test, X_test)).batch(FLAGS.batch_size)
-    return train_ds, test_ds, train_len, test_len
+    train_ds = tf.data.Dataset.from_tensor_slices((X_train, Y_train)).shuffle(BUFFER_SIZE, seed = FLAGS.seed).batch(FLAGS.batch_size)
+
+    del X_train, Y_train
+    return train_ds, train_len
 
 
 
@@ -62,7 +61,7 @@ def unet_2D():
 
     use_upsampling = False
 
-    input_shape = [16, 16, 1]
+    input_shape = [128, 128, 91]
     data_format = "channels_last"
     concat_axis = -1
 
@@ -74,7 +73,7 @@ def unet_2D():
 
     fms = 32
     dropout = 0.3
-    n_cl_out = 1
+    n_cl_out = 91
 
     params_trans = dict(data_format = data_format,
         kernel_size = (2, 2), strides = (2, 2),
@@ -181,7 +180,8 @@ def test_step(images, labels, model, test_loss):
 
 def main(unused_argv):
 
-    train_ds, test_ds, train_len, test_len = create_data_set()
+    train_ds, train_len = create_data_set()
+    test_ds, test_len = create_data_set()
 
     model = unet_2D()
     steps_per_epoch = train_len // FLAGS.batch_size
@@ -203,7 +203,8 @@ def main(unused_argv):
         train_loss.reset_states()
         test_loss.reset_states()
 
-        for images, labels in train_ds:
+        for (step, (images, labels)) in enumerate(train_ds):
+            print("STEP: " + str(step))
             train_step(images, labels, model, optimizer, train_loss)
 
         end_time = time.time()
