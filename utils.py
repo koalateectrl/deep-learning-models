@@ -31,6 +31,10 @@ def resize(img_np, height = 128, width = 128):
         img = img_np[idx, :, :, :]
         img_res = cv2.resize(img, (width, height), interpolation=cv2.INTER_CUBIC)
         resized_np[idx, :, :, :] = img_res
+
+    # to add the 92nd depth layer
+    temp = np.zeros((resized_np.shape[0], resized_np.shape[1], resized_np.shape[2], 5))
+    resized_np = np.concatenate((temp, resized_np), axis = 3)
     return resized_np
 
 
