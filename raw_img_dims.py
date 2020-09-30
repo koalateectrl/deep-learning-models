@@ -30,10 +30,12 @@ print(path_list)
 shape_dict = defaultdict(int)
 
 for idx, path_tuple in enumerate(path_list):
-    noisy_shape, clean_shape = get_shape(path_tuple)
-    shape_dict[noisy_shape] += 1
-    print("Index: " + str(idx))
-    print(noisy_shape)
-    print(clean_shape)
-    print(shape_dict)
+    if path_tuple[0] not in ['/data2/liztong/AI_rsFMRI/noise_rsFMRI/119732_LR_noise.nii.gz', '/data2/liztong/AI_rsFMRI/noise_rsFMRI/127630_LR_noise.nii.gz', '/data2/liztong/AI_rsFMRI/noise_rsFMRI/150423_LR_noise.nii.gz', '/data2/liztong/AI_rsFMRI/noise_rsFMRI/159946_LR_noise.nii.gz', '/data2/liztong/AI_rsFMRI/noise_rsFMRI/183337_LR_noise.nii.gz']:
+    	noisy_shape, clean_shape = get_shape(path_tuple)
+    	shape_dict[noisy_shape] += 1
+    	print("Index: " + str(idx))
+    	print(noisy_shape)
+    	print(clean_shape)
+    	print(shape_dict)
 
+print(path_list[90], path_list[122], path_list[232], path_list[283], path_list[302])

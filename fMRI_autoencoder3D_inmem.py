@@ -12,16 +12,16 @@ from absl import app
 from absl import logging
 
 flags.DEFINE_integer('batch_size', 1, 'Batch size')
-flags.DEFINE_integer('num_epochs', 2, 'Number of epochs')
+flags.DEFINE_integer('num_epochs', 1, 'Number of epochs')
 flags.DEFINE_float('learning_rate', 0.001, 'Initial learning rate for training')
-flags.DEFINE_string('ckpt_path', 'checkpoints/unet2d_', 'Checkpoint Directory')
+flags.DEFINE_string('ckpt_path', 'checkpoints/unet3d_', 'Checkpoint Directory')
 flags.DEFINE_integer('seed', 0, 'Seed for shuffling training batch')
 
 flags.DEFINE_string('noisy_path', '/home/data2/liztong/AI_rsFMRI/noise_rsFMRI', 'Directory with Noisy fMRI Images')
 flags.DEFINE_string('clean_path', '/home/data2/liztong/AI_rsFMRI/clean_rsFMRI', 'Directory with Clean fMRI Images')
 flags.DEFINE_integer('train_len', 1200, 'Number of 3D-images per training example')
 
-# flags.DEFINE_string('img_path', '/home/data2/samwwong/fMRI_denoising/preprocessing/preprocessed_images', 'Path to the preprocessed data')
+
 
 FLAGS = flags.FLAGS
 
@@ -33,11 +33,15 @@ def get_path_list():
     return path_list
 
 def normalize(img_np):
-    '''Linearly normalizes voxel values between 0 and 1'''
-    min_val = np.min(img_np)
-    max_val = np.max(img_np)
+    return img_np / 40000
 
-    return (img_np - min_val) / (max_val - min_val)
+
+# def normalize(img_np):
+#     '''Linearly normalizes voxel values between 0 and 1'''
+#     min_val = np.min(img_np)
+#     max_val = np.max(img_np)
+
+#     return (img_np - min_val) / (max_val - min_val)
 
 
 def resize(img_np, height = 128, width = 128):
@@ -242,39 +246,50 @@ def main(unused_argv):
     test_loss = tf.keras.metrics.Mean(name = 'test_loss')
 
     for epoch in range(1, FLAGS.num_epochs + 1):
-        for one_tuple in path_list[:4]:
+        for idx, one_tuple in enumerate(path_list[:61]):
+            if one_tuple[0] not in ['/home/data2/liztong/AI_rsFMRI/noise_rsFMRI/119732_LR_noise.nii.gz', 
+            '/home/data2/liztong/AI_rsFMRI/noise_rsFMRI/127630_LR_noise.nii.gz', 
+            '/home/data2/liztong/AI_rsFMRI/noise_rsFMRI/150423_LR_noise.nii.gz', 
+            '/home/data2/liztong/AI_rsFMRI/noise_rsFMRI/159946_LR_noise.nii.gz', 
+            '/home/data2/liztong/AI_rsFMRI/noise_rsFMRI/183337_LR_noise.nii.gz']:
 
-            train_ds, train_len = create_data_set(one_tuple)
+                train_ds, train_len = create_data_set(one_tuple)
 
-            start_time = time.time()
+                start_time = time.time()
 
-            train_loss.reset_states()
-            test_loss.reset_states()
+                train_loss.reset_states()
+                test_loss.reset_states()
 
-            for (step, (images, labels)) in enumerate(train_ds):
-                print("STEP: " + str(step))
-                train_step(images, labels, model, optimizer, train_loss)
+                for (step, (images, labels)) in enumerate(train_ds):
+                    print("STEP: " + str(step))
+                    train_step(images, labels, model, optimizer, train_loss)
 
-            end_time = time.time()
-            logging.info(f"Epoch {epoch} time in seconds: {end_time - start_time}")
+                end_time = time.time()
+                logging.info(f"Epoch {epoch} time in seconds: {end_time - start_time}")
 
-            del train_ds
+                del train_ds
 
-            test_ds, test_len = create_data_set(path_list[150])
+                if idx % 1 == 0:
+                    test_ds, test_len = create_data_set(path_list[150])
 
-            for test_images, test_labels in test_ds:
-                test_step(test_images, test_labels, model, test_loss)
+                    for test_images, test_labels in test_ds:
+                        test_step(test_images, test_labels, model, test_loss)
 
-            del test_ds
+                    del test_ds
 
-            template = 'Epoch {}, Loss: {}, Test Loss {}'
-            print(template.format(epoch,
-                train_loss.result(),
-                test_loss.result()))
+                    # template = 'Epoch {}, Loss: {}, Test Loss {}'
+                    # print(template.format(epoch,
+                    #     train_loss.result(),
+                    #     test_loss.result()))
 
-            checkpoint_path = FLAGS.ckpt_path + str(epoch)
-            model.save(checkpoint_path)
+                    checkpoint_path = FLAGS.ckpt_path + str(idx)
+                    model.save(checkpoint_path)
 
+                    row = "epoch: " + str(epoch) + " train loss:" + str(train_loss.result()) + "test loss:" + str(test_loss.result())
+                    print(row)
+                    with open('modelresults_3d.csv', 'a') as fd:
+                        fd.write(row)
+                        fd.write("\n")
 
 
 if __name__ == "__main__":
