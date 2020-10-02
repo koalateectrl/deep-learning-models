@@ -28,13 +28,15 @@ def get_path_list():
     path_list = [(os.path.join(FLAGS.noisy_path, prefix + "noise.nii.gz"), os.path.join(FLAGS.clean_path, prefix + "clean.nii.gz")) for prefix in prefix_list]
     return path_list
 
+# def normalize(img_np):
+#     '''Linearly normalizes voxel values between 0 and 1'''
+#     min_val = np.min(img_np)
+#     max_val = np.max(img_np)
+
+#     return (img_np - min_val) / (max_val - min_val), min_val, max_val
+
 def normalize(img_np):
-    '''Linearly normalizes voxel values between 0 and 1'''
-    min_val = np.min(img_np)
-    max_val = np.max(img_np)
-
-    return (img_np - min_val) / (max_val - min_val), min_val, max_val
-
+    return img_np / 40000
 
 def resize(img_np, height = 128, width = 128):
     img_np = np.moveaxis(img_np, -1, 0)
@@ -61,7 +63,7 @@ def create_data_set(noisy_img_path):
 
     generate_noisy(img_np, affine, header)
 
-    noisy_img, min_val, max_val = normalize(img_np)
+    noisy_img = normalize(img_np)#, min_val, max_val = normalize(img_np)
 
     noisy_img_expanded_dims = np.expand_dims(noisy_img, axis = 4)
 
@@ -70,11 +72,14 @@ def create_data_set(noisy_img_path):
 
     noisy_ds = tf.data.Dataset.from_tensor_slices(noisy_img_expanded_dims).batch(FLAGS.batch_size)
     del noisy_img_expanded_dims
-    return noisy_ds, noisy_len, affine, header, min_val, max_val
+    return noisy_ds, noisy_len, affine, header#, min_val, max_val
 
 
-def unnormalize(img_np, min_val, max_val):
-    return img_np * (max_val - min_val) + min_val
+def unnormalize(img_np):
+    return img_np * 40000
+
+# def unnormalize(img_np, min_val, max_val):
+    # return img_np * (max_val - min_val) + min_val
 
 def generate_noisy(img_np, affine, header):
     noisy_img = nib.Nifti1Image(img_np, affine, header)
@@ -102,25 +107,26 @@ def main(unused_argv):
 
     path_list = get_path_list()
 
-    checkpoint_path = os.path.join(FLAGS.ckpt_path, "unet3d_" + str(2))
-    model = tf.keras.models.load_model(checkpoint_path)
+    noisy_ds, noisy_len, affine, header = create_data_set(path_list[FLAGS.test_image][0]) #, min_val, max_val = create_data_set(path_list[FLAGS.test_image][0])
 
+    for i in range(1, 3):
+        checkpoint_path = os.path.join(FLAGS.ckpt_path, "unet3d_" + str(i))
+        model = tf.keras.models.load_model(checkpoint_path)
 
+        output_img = np.zeros((noisy_len, 128, 128, 96, 1))
 
-    noisy_ds, noisy_len, affine, header, min_val, max_val = create_data_set(path_list[FLAGS.test_image][0])
+        for idx, images in enumerate(noisy_ds):
+            print(idx)
+            one_clean_img = generate_output(images, model)
+            output_img[idx, :, :, :, :] = one_clean_img
 
-    output_img = np.zeros((noisy_len, 128, 128, 96, 1))
+        output_img = np.squeeze(output_img)
+        output_img = unnormalize(output_img)#, min_val, max_val)
+        output_img = nib.Nifti1Image(output_img, affine, header)
 
-    for idx, images in enumerate(noisy_ds):
-        print(idx)
-        one_clean_img = generate_output(images, model)
-        output_img[idx, :, :, :, :] = one_clean_img
+        nib.save(output_img, os.path.join(FLAGS.output_path, "model_output_" + str(i) + ".nii.gz"))
 
-    output_img = np.squeeze(output_img)
-    output_img = unnormalize(output_img, min_val, max_val)
-    output_img = nib.Nifti1Image(output_img, affine, header)
-
-    nib.save(output_img, os.path.join(FLAGS.output_path, "model_output.nii.gz"))
+        del output_img
 
     generate_clean(path_list[FLAGS.test_image][1])
 

@@ -285,7 +285,7 @@ def main(unused_argv):
                     checkpoint_path = FLAGS.ckpt_path + str(idx)
                     model.save(checkpoint_path)
 
-                    row = "epoch: " + str(epoch) + " train loss:" + str(train_loss.result()) + "test loss:" + str(test_loss.result())
+                    row = "epoch: " + str(idx) + " train loss:" + str(train_loss.result()) + "test loss:" + str(test_loss.result())
                     print(row)
                     with open('modelresults_3d.csv', 'a') as fd:
                         fd.write(row)
