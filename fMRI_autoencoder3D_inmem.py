@@ -5,7 +5,7 @@ import tensorflow_addons as tfa
 import os
 import numpy as np
 import nibabel as nib
-import cv2
+#import cv2
 
 from absl import flags
 from absl import app
@@ -17,7 +17,7 @@ flags.DEFINE_float('learning_rate', 0.001, 'Initial learning rate for training')
 flags.DEFINE_string('ckpt_path', 'checkpoints/unet3d_', 'Checkpoint Directory')
 flags.DEFINE_integer('seed', 0, 'Seed for shuffling training batch')
 
-flags.DEFINE_string('noisy_path', 'home/data2/liztong/AI_rsFMRI/Resampled/Resampled_noise', 'Directory with Noisy fMRI Images')
+flags.DEFINE_string('noisy_path', '/home/data2/liztong/AI_rsFMRI/Resampled/Resampled_noise', 'Directory with Noisy fMRI Images')
 flags.DEFINE_string('clean_path', '/home/data2/liztong/AI_rsFMRI/Resampled/Resampled_clean_v2', 'Directory with Clean fMRI Images')
 flags.DEFINE_integer('train_len', 400, 'Number of 3D-images per training example')
 
@@ -26,12 +26,12 @@ flags.DEFINE_integer('train_len', 400, 'Number of 3D-images per training example
 FLAGS = flags.FLAGS
 
 
-def get_img_paths():
-    prefix_list = [f.split("noise")[0] for f in os.listdir(noisy_path) if not f.startswith('.')]
+def get_path_list():
+    prefix_list = [f.split("noise")[0] for f in os.listdir(FLAGS.noisy_path) if not f.startswith('.')]
     prefix_list = np.sort(prefix_list)
 
-    path_list = [(os.path.join(noisy_path, prefix + "noise_sub2_tp300.nii.gz"), 
-                  os.path.join(clean_path, prefix + "clean_sub2_tp300_v2.nii.gz")) for prefix in prefix_list]
+    path_list = [(os.path.join(FLAGS.noisy_path, prefix + "noise_sub2_tp300.nii.gz"), 
+                  os.path.join(FLAGS.clean_path, prefix + "clean_sub2_tp300_v2.nii.gz")) for prefix in prefix_list]
     return path_list
 
 def normalize(img_np):
@@ -252,7 +252,7 @@ def main(unused_argv):
     test_loss = tf.keras.metrics.Mean(name = 'test_loss')
 
     for epoch in range(1, FLAGS.num_epochs + 1):
-        for idx, one_tuple in enumerate(path_list[:2]):
+        for idx, one_tuple in enumerate(path_list[:101]):
             if one_tuple[0] not in ['/home/data2/liztong/AI_rsFMRI/noise_rsFMRI/119732_LR_noise.nii.gz', 
             '/home/data2/liztong/AI_rsFMRI/noise_rsFMRI/127630_LR_noise.nii.gz', 
             '/home/data2/liztong/AI_rsFMRI/noise_rsFMRI/150423_LR_noise.nii.gz', 
@@ -276,7 +276,7 @@ def main(unused_argv):
                 del train_ds
 
                 if idx % 1 == 0:
-                    test_ds, test_len = create_data_set(path_list[150])
+                    test_ds, test_len = create_data_set(path_list[60])
 
                     for test_images, test_labels in test_ds:
                         test_step(test_images, test_labels, model, test_loss)
