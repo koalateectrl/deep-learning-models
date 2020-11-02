@@ -17,19 +17,21 @@ flags.DEFINE_float('learning_rate', 0.001, 'Initial learning rate for training')
 flags.DEFINE_string('ckpt_path', 'checkpoints/unet3d_', 'Checkpoint Directory')
 flags.DEFINE_integer('seed', 0, 'Seed for shuffling training batch')
 
-flags.DEFINE_string('noisy_path', '/home/data2/liztong/AI_rsFMRI/noise_rsFMRI', 'Directory with Noisy fMRI Images')
-flags.DEFINE_string('clean_path', '/home/data2/liztong/AI_rsFMRI/clean_rsFMRI', 'Directory with Clean fMRI Images')
-flags.DEFINE_integer('train_len', 1200, 'Number of 3D-images per training example')
+flags.DEFINE_string('noisy_path', 'home/data2/liztong/AI_rsFMRI/Resampled/Resampled_noise', 'Directory with Noisy fMRI Images')
+flags.DEFINE_string('clean_path', '/home/data2/liztong/AI_rsFMRI/Resampled/Resampled_clean_v2', 'Directory with Clean fMRI Images')
+flags.DEFINE_integer('train_len', 400, 'Number of 3D-images per training example')
 
 
 
 FLAGS = flags.FLAGS
 
 
-def get_path_list():
-    prefix_list = prefix_list = [f.split("noise")[0] for f in os.listdir(FLAGS.noisy_path) if not f.startswith('.')]
+def get_img_paths():
+    prefix_list = [f.split("noise")[0] for f in os.listdir(noisy_path) if not f.startswith('.')]
     prefix_list = np.sort(prefix_list)
-    path_list = [(os.path.join(FLAGS.noisy_path, prefix + "noise.nii.gz"), os.path.join(FLAGS.clean_path, prefix + "clean.nii.gz")) for prefix in prefix_list]
+
+    path_list = [(os.path.join(noisy_path, prefix + "noise_sub2_tp300.nii.gz"), 
+                  os.path.join(clean_path, prefix + "clean_sub2_tp300_v2.nii.gz")) for prefix in prefix_list]
     return path_list
 
 def normalize(img_np):
@@ -44,40 +46,44 @@ def normalize(img_np):
 #     return (img_np - min_val) / (max_val - min_val)
 
 
-def resize(img_np, height = 128, width = 128):
+# def resize(img_np, height = 128, width = 128):
+#     img_np = np.moveaxis(img_np, -1, 0)
+#     depth = img_np.shape[3]
+
+#     resized_np = np.zeros((len(img_np), width, height, depth))
+#     for idx in range(len(img_np)):
+#         img = img_np[idx, :, :, :]
+#         img_res = cv2.resize(img, (width, height), interpolation=cv2.INTER_CUBIC)
+#         resized_np[idx, :, :, :] = img_res
+
+#     # to add the 92nd depth layer
+#     temp = np.zeros((resized_np.shape[0], resized_np.shape[1], resized_np.shape[2], 5))
+#     resized_np = np.concatenate((temp, resized_np), axis = 3)
+#     return resized_np
+
+def preprocess(img_np):
+    img_np = np.pad(img_np, ((9, 9), (5, 4), (9, 9), (0, 0)), 'constant')
     img_np = np.moveaxis(img_np, -1, 0)
-    depth = img_np.shape[3]
-
-    resized_np = np.zeros((len(img_np), width, height, depth))
-    for idx in range(len(img_np)):
-        img = img_np[idx, :, :, :]
-        img_res = cv2.resize(img, (width, height), interpolation=cv2.INTER_CUBIC)
-        resized_np[idx, :, :, :] = img_res
-
-    # to add the 92nd depth layer
-    temp = np.zeros((resized_np.shape[0], resized_np.shape[1], resized_np.shape[2], 5))
-    resized_np = np.concatenate((temp, resized_np), axis = 3)
-    return resized_np
+    return normalize(img_np)
 
 
 def create_data_set(one_tuple):
     print(one_tuple[0])
     # Create X_train
-    img_np = np.array(nib.load(one_tuple[0]).dataobj)
-    img_np = resize(img_np)
-    X_train = normalize(img_np)
+    img_np_noise = np.array(nib.load(one_tuple[0]).dataobj)
+    X_train = preprocess(img_np_noise)
 
     train_len = X_train.shape[0] 
     X_expanded_dims = np.expand_dims(X_train, axis = 4)
-    del X_train
+    del X_train, img_np_noise
 
     # Create Y_train
-    img_np = np.array(nib.load(one_tuple[1]).dataobj)
-    img_np = resize(img_np)
-    Y_train = normalize(img_np)
+    img_np_clean = np.array(nib.load(one_tuple[1]).dataobj)
+
+    Y_train = preprocess(img_np_clean)
 
     Y_expanded_dims = np.expand_dims(Y_train, axis = 4)
-    del Y_train
+    del Y_train, img_np_clean
 
     print(X_expanded_dims.shape, Y_expanded_dims.shape)
 
@@ -110,7 +116,7 @@ def unet_3D():
 
     use_upsampling = False
 
-    input_shape = [128, 128, 96, 1]
+    input_shape = [64, 64, 64, 1]
     data_format = "channels_last"
     concat_axis = -1
 
@@ -246,7 +252,7 @@ def main(unused_argv):
     test_loss = tf.keras.metrics.Mean(name = 'test_loss')
 
     for epoch in range(1, FLAGS.num_epochs + 1):
-        for idx, one_tuple in enumerate(path_list[:61]):
+        for idx, one_tuple in enumerate(path_list[:2]):
             if one_tuple[0] not in ['/home/data2/liztong/AI_rsFMRI/noise_rsFMRI/119732_LR_noise.nii.gz', 
             '/home/data2/liztong/AI_rsFMRI/noise_rsFMRI/127630_LR_noise.nii.gz', 
             '/home/data2/liztong/AI_rsFMRI/noise_rsFMRI/150423_LR_noise.nii.gz', 
@@ -287,7 +293,7 @@ def main(unused_argv):
 
                     row = "epoch: " + str(idx) + " train loss:" + str(train_loss.result()) + "test loss:" + str(test_loss.result())
                     print(row)
-                    with open('modelresults_3d.csv', 'a') as fd:
+                    with open('modelresults_3d_new.csv', 'a') as fd:
                         fd.write(row)
                         fd.write("\n")
 
